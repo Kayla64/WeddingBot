@@ -1,7 +1,8 @@
 import os
 import logging
+import requests
 from datetime import datetime, timedelta
-from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, ContextTypes, JobQueue
+from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, ContextTypes
 from telegram import Update
 from dotenv import load_dotenv
 
@@ -25,6 +26,9 @@ SONG_NAME, SONG_ARTIST, SUGGEST_ACTIVITY = range(3)
 # Define the wedding date
 WEDDING_DATE = datetime(2026, 12, 12)
 
+# Counter for tracking messages
+MESSAGE_COUNTER = 0
+
 class WeddingBot:
     def __init__(self):
         # Load the bot token from environment variables
@@ -37,9 +41,9 @@ class WeddingBot:
 
         # Add command handlers
         self.application.add_handler(CommandHandler('start', self.start))
-        self.application.add_handler(CommandHandler('countdown', self.countdown))  # Countdown command
-        self.application.add_handler(CommandHandler('daysuntil', self.days_until))  # DaysUntil command
-        self.application.add_handler(CommandHandler('faq', self.faq))  # FAQ command
+        self.application.add_handler(CommandHandler('countdown', self.countdown))  
+        self.application.add_handler(CommandHandler('faq', self.faq))  
+        self.application.add_handler(CommandHandler('quote', self.quote))  # Quote command
 
         # Convo handler for /song
         song_handler = ConversationHandler(
@@ -62,9 +66,13 @@ class WeddingBot:
         )
         self.application.add_handler(activity_handler)
 
-        # Schedule automatic countdown
+        # Add a message handler to track and post a quote every 20 messages
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.track_messages))
+
+        # JobQueue for automatic countdown posting
         job_queue = self.application.job_queue
-        job_queue.run_repeating(self.schedule_countdown, interval=timedelta(days=1), first=datetime.now())
+        job_queue.run_repeating(self.auto_post_countdown, interval=timedelta(days=1), first=datetime.now())
+
 
         # Add error handler
         self.application.add_error_handler(self.error_handler)
@@ -76,6 +84,36 @@ class WeddingBot:
             chat_id=update.effective_chat.id,
             text="Hello! Welcome to the Wedding Planning Bot."
         )
+
+    # Fetch quote from ZenQuotes API
+    def get_quote(self):
+        try:
+            response = requests.get('https://zenquotes.io/api/random')
+            if response.status_code == 200:
+                quote_json = response.json()
+                return f"{quote_json[0]['q']} — {quote_json[0]['a']}"
+            else:
+                return "Sorry, I couldn't fetch a quote at the moment."
+        except Exception as e:
+            logger.error(f"Error fetching quote from ZenQuotes: {e}")
+            return "Sorry, something went wrong while fetching the quote."
+
+    # /quote command
+    async def quote(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Send a random quote fetched from ZenQuotes API."""
+        quote = self.get_quote()
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=quote)
+
+    # Track messages and post a quote every 20 messages
+    async def track_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Track the number of messages in the chat, and post a quote every 20 messages."""
+        global MESSAGE_COUNTER
+        MESSAGE_COUNTER += 1
+
+        if MESSAGE_COUNTER >= 20:
+            MESSAGE_COUNTER = 0
+            quote = self.get_quote()
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Here's a motivational quote for you:\n\n{quote}")
 
     # Song suggestion command
     async def song_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,11 +184,6 @@ class WeddingBot:
         days_remaining, countdown_message = self.calculate_days_until()
         await context.bot.send_message(chat_id=update.effective_chat.id, text=countdown_message)
 
-    # Check days until the wedding
-    async def days_until(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Command for checking the days until the wedding at any time."""
-        days_remaining, countdown_message = self.calculate_days_until()
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=countdown_message)
 
     # FAQ command
     async def faq(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -228,15 +261,16 @@ Don't see your question? Just ask in the chat and an admin member will answer sh
         minutes_remaining = (seconds_remaining % 3600) // 60
         countdown_message = f"The wedding is in {days_remaining} days, {hours_remaining} hours, and {minutes_remaining} minutes!"
         return days_remaining, countdown_message
-
-    # Automatically post countdown updates
-    async def schedule_countdown(self, context: ContextTypes.DEFAULT_TYPE):
-        """Automatically post countdown messages according to the schedule."""
+    
+    # Automatically post countdown based on time left
+    async def auto_post_countdown(self, context: ContextTypes.DEFAULT_TYPE):
+        """Automatically post countdown updates according to the schedule."""
         days_remaining, countdown_message = self.calculate_days_until()
-        chat_id = -4530637343  # Replace with the chat ID where you want the bot to post
+        chat_id = -4530637343  # Replace with your chat ID
 
-        if days_remaining > 60:
-            # Post once a month
+        # Automatic posting logic
+        if days_remaining > 30:
+            # Post monthly
             if datetime.now().day == 1:  # Post on the 1st of the month
                 await context.bot.send_message(chat_id=chat_id, text=countdown_message)
 
