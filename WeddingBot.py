@@ -44,6 +44,7 @@ class WeddingBot:
         self.application.add_handler(CommandHandler('countdown', self.countdown))  
         self.application.add_handler(CommandHandler('faq', self.faq))  
         self.application.add_handler(CommandHandler('quote', self.quote))  # Quote command
+        self.application.add_handler(CommandHandler('displaylists', self.display_lists))  # Display both lists
 
         # Convo handler for /song
         song_handler = ConversationHandler(
@@ -52,7 +53,7 @@ class WeddingBot:
                 SONG_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_song_name)],
                 SONG_ARTIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_song_artist)],
             },
-            fallbacks=[CommandHandler('cancel', self.cancel)]
+            fallbacks=[]
         )
         self.application.add_handler(song_handler)
 
@@ -62,7 +63,7 @@ class WeddingBot:
             states={
                 SUGGEST_ACTIVITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_activity)]
             },
-            fallbacks=[CommandHandler('cancel', self.cancel)]
+            fallbacks=[]
         )
         self.application.add_handler(activity_handler)
 
@@ -73,9 +74,29 @@ class WeddingBot:
         job_queue = self.application.job_queue
         job_queue.run_repeating(self.auto_post_countdown, interval=timedelta(days=1), first=datetime.now())
 
-
         # Add error handler
         self.application.add_error_handler(self.error_handler)
+
+    # Display both song and activity lists
+    async def display_lists(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Display both the song and activity lists separated by '-----'."""
+        # Read song list
+        song_list = "No songs available."
+        if os.path.exists(SONG_FILE):
+            with open(SONG_FILE, 'r') as file:
+                song_list = file.read().strip() or "No songs available."
+
+        # Read activity list
+        activity_list = "No activities available."
+        if os.path.exists(ACTIVITY_FILE):
+            with open(ACTIVITY_FILE, 'r') as file:
+                activity_list = file.read().strip() or "No activities available."
+
+        # Combine lists with a separator
+        combined_list = f"Song List:\n{song_list}\n\n-----\n\nActivity List:\n{activity_list}"
+
+        # Send the combined list to the user
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=combined_list)
 
     # Start command
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,7 +205,6 @@ class WeddingBot:
         days_remaining, countdown_message = self.calculate_days_until()
         await context.bot.send_message(chat_id=update.effective_chat.id, text=countdown_message)
 
-
     # FAQ command
     async def faq(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Send the FAQ to the user."""
@@ -206,17 +226,11 @@ _About the Wedding_
 *Are children invited to the wedding?*
 \- If needed\.
 
-*Is there a specific time for guest arrival?*
-\- Try to arrive at least 15 minutes before, so like 1\:45\.
-
 *Is there parking available at the venue?*
 \- Yes\. Carpool drivers will also be available\.
 
 *Can I bring a plus\-one to the wedding?*
 \- Request a plus\-one by the RSVP date\.
-
-*Do you have a wedding registry?*
-\- Yes, but using it is not mandatory\.
 
 *Will there be any special dietary options at the reception?*
 \- Please request\.
@@ -289,12 +303,6 @@ Don't see your question? Just ask in the chat and an admin member will answer sh
         logger.error(msg="Exception while handling an update:", exc_info=context.error)
         if update.effective_chat:
             await context.bot.send_message(chat_id=update.effective_chat.id, text="An error occurred!")
-
-    # Cancel ongoing commands
-    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Cancel any ongoing conversation."""
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Operation canceled.")
-        return ConversationHandler.END  # End the conversation
 
     # Run the bot
     def run(self):
